@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import Select, or_, select
 from sqlalchemy.orm import selectinload
 
-from trailforge.models.routes import RiskTag, RoutePoint, TrailRoute, route_risk_tags
+from trailforge.models.routes import RiskTag, RoutePoint, RouteRevision, TrailRoute, route_risk_tags
 from trailforge.repositories.base import BaseRepository, PageResult
 from trailforge.schemas.routes import RouteFilter
 
@@ -38,6 +38,7 @@ class RouteRepository(BaseRepository[TrailRoute]):
         statement: Select = select(TrailRoute).options(
             selectinload(TrailRoute.risk_tags),
             selectinload(TrailRoute.points),
+            selectinload(TrailRoute.segments),
         )
         if filters.search:
             pattern = f"%{filters.search.strip()}%"
@@ -72,8 +73,10 @@ class RouteRepository(BaseRepository[TrailRoute]):
             )
         if filters.is_loop is not None:
             statement = statement.where(TrailRoute.is_loop == filters.is_loop)
-        if filters.is_published is not None:
-            statement = statement.where(TrailRoute.is_published == filters.is_published)
+        if filters.is_published is True:
+            statement = statement.where(TrailRoute.current_revision_no.is_not(None))
+        elif filters.is_published is False:
+            statement = statement.where(TrailRoute.current_revision_no.is_(None))
         return self.paginate(
             statement.distinct(),
             page=filters.page,
@@ -81,6 +84,19 @@ class RouteRepository(BaseRepository[TrailRoute]):
             sort=filters.sort,
             direction=filters.direction,
         )
+
+    def current_revisions(self, route_ids: list[int]) -> dict[int, RouteRevision]:
+        if not route_ids:
+            return {}
+        rows = self.session.scalars(
+            select(RouteRevision)
+            .where(
+                RouteRevision.route_id.in_(route_ids),
+                RouteRevision.revision_no == TrailRoute.current_revision_no,
+            )
+            .join(TrailRoute, TrailRoute.id == RouteRevision.route_id)
+        )
+        return {row.route_id: row for row in rows}
 
     def get_risk_tags(self, tag_ids: list[int]) -> list[RiskTag]:
         if not tag_ids:

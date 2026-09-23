@@ -160,6 +160,8 @@ class AuditAction(StrEnum):
     RETURNED = "returned"
     RISK_RECORDED = "risk_recorded"
     EMERGENCY_RECORDED = "emergency_recorded"
+    PUBLISHED = "published"
+    DRAFT_DERIVED = "draft_derived"
 
 
 PLAN_TRANSITIONS: dict[PlanStatus, set[PlanStatus]] = {

@@ -9,9 +9,14 @@ from trailforge.api.dependencies import get_session
 from trailforge.domain.enums import Difficulty, PointType, RiskLevel
 from trailforge.schemas.common import Page
 from trailforge.schemas.routes import (
+    DeriveDraftRequest,
+    RevisionDiff,
     RiskTagCreate,
     RiskTagResponse,
     RouteFilter,
+    RoutePublishRequest,
+    RouteRevisionResponse,
+    RouteRevisionSummary,
     TrailRouteCreate,
     TrailRouteResponse,
     TrailRouteUpdate,
@@ -88,7 +93,14 @@ def list_routes(
 
 @router.get("/{route_id}", response_model=TrailRouteResponse)
 def get_route(route_id: int, session: SessionDep) -> TrailRouteResponse:
+    # Returns the current published revision for published routes; drafts
+    # return their working copy.
     return RouteService(session).get_route(route_id)
+
+
+@router.get("/{route_id}/draft", response_model=TrailRouteResponse)
+def get_route_draft(route_id: int, session: SessionDep) -> TrailRouteResponse:
+    return RouteService(session).get_draft(route_id)
 
 
 @router.patch("/{route_id}", response_model=TrailRouteResponse)
@@ -99,6 +111,55 @@ def update_route(
     actor_id: int = Query(gt=0),
 ) -> TrailRouteResponse:
     return RouteService(session).update_route(route_id, data, actor_id=actor_id)
+
+
+@router.post(
+    "/{route_id}/publish",
+    response_model=RouteRevisionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def publish_route(
+    route_id: int,
+    data: RoutePublishRequest,
+    session: SessionDep,
+    actor_id: int = Query(gt=0),
+) -> RouteRevisionResponse:
+    return RouteService(session).publish_route(route_id, data, actor_id=actor_id)
+
+
+@router.post("/{route_id}/derive-draft", response_model=TrailRouteResponse)
+def derive_route_draft(
+    route_id: int,
+    data: DeriveDraftRequest,
+    session: SessionDep,
+    actor_id: int = Query(gt=0),
+) -> TrailRouteResponse:
+    return RouteService(session).derive_draft(route_id, data, actor_id=actor_id)
+
+
+@router.get("/{route_id}/revisions", response_model=list[RouteRevisionSummary])
+def list_route_revisions(route_id: int, session: SessionDep) -> list[RouteRevisionSummary]:
+    return RouteService(session).list_revisions(route_id)
+
+
+@router.get(
+    "/{route_id}/revisions/diff",
+    response_model=RevisionDiff,
+)
+def diff_route_revisions(
+    route_id: int,
+    session: SessionDep,
+    from_revision_no: int = Query(alias="from", ge=1),
+    to_revision_no: int = Query(alias="to", ge=1),
+) -> RevisionDiff:
+    return RouteService(session).diff_revisions(route_id, from_revision_no, to_revision_no)
+
+
+@router.get("/{route_id}/revisions/{revision_no}", response_model=RouteRevisionResponse)
+def get_route_revision(
+    route_id: int, revision_no: int, session: SessionDep
+) -> RouteRevisionResponse:
+    return RouteService(session).get_revision(route_id, revision_no)
 
 
 @router.get("/{route_id}/readiness")

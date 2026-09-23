@@ -18,8 +18,10 @@ from trailforge.errors import (
     ValidationError,
 )
 from trailforge.models.activities import Expedition, ExpeditionRegistration
+from trailforge.models.routes import RouteRevision
 from trailforge.repositories.activities import ExpeditionRepository
 from trailforge.repositories.base import apply_version
+from trailforge.repositories.revisions import RevisionRepository
 from trailforge.repositories.routes import RouteRepository
 from trailforge.repositories.users import UserRepository
 from trailforge.schemas.activities import (
@@ -35,7 +37,9 @@ from trailforge.schemas.activities import (
     WithdrawalRequest,
 )
 from trailforge.schemas.common import Page
+from trailforge.schemas.routes import RouteRevisionResponse
 from trailforge.services.base import ServiceBase
+from trailforge.services.routes import RouteService
 
 
 class ExpeditionService(ServiceBase):
@@ -47,12 +51,30 @@ class ExpeditionService(ServiceBase):
 
     def create(self, data: ExpeditionCreate) -> ExpeditionResponse:
         organizer = self.users.require(data.organizer_id)
-        route = self.routes.get_detail(data.route_id)
+        route = self.routes.get_detail(data.route_id, for_update=True)
         if route is None:
             raise NotFoundError(f"TrailRoute {data.route_id} was not found")
-        if not route.is_published:
+        if route.current_revision_no is None:
             raise ValidationError("an expedition requires a published route")
-        expedition = Expedition(**data.model_dump())
+        if data.route_revision_no is None:
+            revision_no = route.current_revision_no
+        else:
+            revision_no = data.route_revision_no
+        revision = RevisionRepository(self.session).get(route.id, revision_no)
+        if revision is None:
+            raise ValidationError(
+                "route revision does not exist for this route",
+                context={
+                    "route_id": route.id,
+                    "requested_revision_no": revision_no,
+                    "current_revision_no": route.current_revision_no,
+                },
+            )
+        expedition = Expedition(
+            **data.model_dump(exclude={"route_revision_no"}),
+            route_revision_id=revision.id,
+            route_revision_no=revision.revision_no,
+        )
         self.session.add(expedition)
         self.session.flush()
         organizer_registration = ExpeditionRegistration(
@@ -71,7 +93,12 @@ class ExpeditionService(ServiceBase):
             entity_id=expedition.id,
             action=AuditAction.CREATED,
             after=self.snapshot(expedition),
-            context={"route_id": route.id, "organizer_registration_id": organizer_registration.id},
+            context={
+                "route_id": route.id,
+                "route_revision_id": revision.id,
+                "route_revision_no": revision.revision_no,
+                "organizer_registration_id": organizer_registration.id,
+            },
         )
         return ExpeditionResponse.model_validate(expedition)
 
@@ -80,6 +107,16 @@ class ExpeditionService(ServiceBase):
         if expedition is None:
             raise NotFoundError(f"Expedition {expedition_id} was not found")
         return ExpeditionResponse.model_validate(expedition)
+
+    def pinned_route_revision(self, expedition_id: int) -> RouteRevisionResponse:
+        expedition = self.expeditions.require(expedition_id)
+        revision = self.session.get(RouteRevision, expedition.route_revision_id)
+        if revision is None:
+            raise NotFoundError(
+                "the route revision pinned to this expedition is missing",
+                context={"route_revision_id": expedition.route_revision_id},
+            )
+        return RouteService._revision_response(revision)
 
     def list(self, filters: ExpeditionFilter) -> Page[ExpeditionResponse]:
         result = self.expeditions.list_expeditions(filters)

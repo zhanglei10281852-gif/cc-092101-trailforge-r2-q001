@@ -15,6 +15,7 @@ from trailforge.schemas.common import (
 class ExpeditionCreate(BaseModel):
     organizer_id: int = Field(gt=0)
     route_id: int = Field(gt=0)
+    route_revision_no: int | None = Field(default=None, ge=1)
     name: str = Field(min_length=1, max_length=180)
     description: str = Field(default="", max_length=10000)
     meeting_location: str = Field(min_length=1, max_length=240)
@@ -69,6 +70,8 @@ class ExpeditionUpdate(BaseModel):
 class ExpeditionResponse(VersionedResponse):
     organizer_id: int
     route_id: int
+    route_revision_id: int
+    route_revision_no: int
     name: str
     description: str
     meeting_location: str

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -25,6 +26,20 @@ class RouteSegmentCreate(BaseModel):
     @classmethod
     def normalize_name(cls, value: str) -> str:
         return clean_text(value)
+
+
+class RouteSegmentData(BaseModel):
+    sequence: int
+    name: str
+    description: str
+    distance_km: float
+    elevation_gain_m: int
+    estimated_duration_minutes: int
+    difficulty: Difficulty
+    start_latitude: float
+    start_longitude: float
+    end_latitude: float
+    end_longitude: float
 
 
 class RouteSegmentResponse(TimestampedResponse):
@@ -66,6 +81,18 @@ class RoutePointCreate(BaseModel):
         return self
 
 
+class RoutePointData(BaseModel):
+    sequence: int
+    name: str
+    point_type: PointType
+    latitude: float
+    longitude: float
+    altitude_m: int | None
+    distance_from_start_km: float
+    description: str
+    supply_details: str
+
+
 class RoutePointResponse(TimestampedResponse):
     route_id: int
     sequence: int
@@ -95,6 +122,15 @@ class RiskTagCreate(BaseModel):
     @classmethod
     def normalize_name(cls, value: str) -> str:
         return clean_text(value)
+
+
+class RiskTagData(BaseModel):
+    id: int
+    code: str
+    name: str
+    level: RiskLevel
+    description: str
+    mitigation: str
 
 
 class RiskTagResponse(TimestampedResponse):
@@ -156,10 +192,11 @@ class TrailRouteUpdate(BaseModel):
     distance_km: float | None = Field(default=None, gt=0, le=1000)
     elevation_gain_m: int | None = Field(default=None, ge=0, le=20000)
     elevation_loss_m: int | None = Field(default=None, ge=0, le=20000)
+    min_altitude_m: int | None = Field(default=None, ge=-500, le=9000)
+    max_altitude_m: int | None = Field(default=None, ge=-500, le=9000)
     estimated_duration_minutes: int | None = Field(default=None, gt=0, le=10080)
     difficulty: Difficulty | None = None
     is_loop: bool | None = None
-    is_published: bool | None = None
     risk_tag_ids: list[int] | None = Field(default=None, max_length=100)
     expected_version: int | None = Field(default=None, ge=1)
 
@@ -177,9 +214,91 @@ class TrailRouteResponse(VersionedResponse):
     difficulty: Difficulty
     is_loop: bool
     is_published: bool
-    segments: list[RouteSegmentResponse] = Field(default_factory=list)
-    points: list[RoutePointResponse] = Field(default_factory=list)
-    risk_tags: list[RiskTagResponse] = Field(default_factory=list)
+    current_revision_no: int | None = None
+    draft_source_revision_no: int | None = None
+    segments: list[RouteSegmentData] = Field(default_factory=list)
+    points: list[RoutePointData] = Field(default_factory=list)
+    risk_tags: list[RiskTagData] = Field(default_factory=list)
+
+
+class RoutePublishRequest(BaseModel):
+    change_summary: str = Field(default="", max_length=4000)
+    expected_version: int | None = Field(default=None, ge=1)
+
+
+class DeriveDraftRequest(BaseModel):
+    revision_no: int = Field(ge=1)
+
+
+class RouteRevisionSummary(BaseModel):
+    id: int
+    route_id: int
+    revision_no: int
+    published_at: datetime
+    published_by: int | None
+    derived_from_revision_no: int | None
+    change_summary: str
+    name: str
+    region: str
+    distance_km: float
+    elevation_gain_m: int
+    estimated_duration_minutes: int
+    difficulty: Difficulty
+    is_loop: bool
+    segment_count: int
+    point_count: int
+    risk_tag_count: int
+
+
+class RouteRevisionResponse(BaseModel):
+    id: int
+    route_id: int
+    revision_no: int
+    published_at: datetime
+    published_by: int | None
+    derived_from_revision_no: int | None
+    change_summary: str
+    name: str
+    region: str
+    description: str
+    distance_km: float
+    elevation_gain_m: int
+    elevation_loss_m: int
+    min_altitude_m: int
+    max_altitude_m: int
+    estimated_duration_minutes: int
+    difficulty: Difficulty
+    is_loop: bool
+    segments: list[RouteSegmentData] = Field(default_factory=list)
+    points: list[RoutePointData] = Field(default_factory=list)
+    risk_tags: list[RiskTagData] = Field(default_factory=list)
+
+
+class FieldChange(BaseModel):
+    old: Any = None
+    new: Any = None
+
+
+class SequenceItemChange(BaseModel):
+    sequence: int
+    fields: dict[str, FieldChange]
+
+
+class CollectionChange(BaseModel):
+    added: list[dict[str, Any]] = Field(default_factory=list)
+    removed: list[dict[str, Any]] = Field(default_factory=list)
+    changed: list[SequenceItemChange] = Field(default_factory=list)
+
+
+class RevisionDiff(BaseModel):
+    route_id: int
+    from_revision_no: int
+    to_revision_no: int
+    fields: dict[str, FieldChange]
+    segments: CollectionChange
+    points: CollectionChange
+    risk_tags_added: list[RiskTagData] = Field(default_factory=list)
+    risk_tags_removed: list[RiskTagData] = Field(default_factory=list)
 
 
 class RouteFilter(BaseModel):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import CheckConstraint, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -8,6 +9,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from trailforge.database.base import Base, UTCDateTime
 from trailforge.domain.enums import ActivityStatus, RegistrationStatus, RiskLevel, TeamRole
 from trailforge.models.mixins import IntegerPrimaryKeyMixin, TimestampMixin, VersionMixin
+
+if TYPE_CHECKING:
+    from trailforge.models.routes import RouteRevision
 
 
 class Expedition(IntegerPrimaryKeyMixin, TimestampMixin, VersionMixin, Base):
@@ -23,6 +27,10 @@ class Expedition(IntegerPrimaryKeyMixin, TimestampMixin, VersionMixin, Base):
         ForeignKey("users.id", ondelete="RESTRICT"), index=True
     )
     route_id: Mapped[int] = mapped_column(ForeignKey("trail_routes.id", ondelete="RESTRICT"))
+    route_revision_id: Mapped[int] = mapped_column(
+        ForeignKey("route_revisions.id", ondelete="RESTRICT"), index=True
+    )
+    route_revision_no: Mapped[int] = mapped_column(Integer, nullable=False)
     name: Mapped[str] = mapped_column(String(180), nullable=False, index=True)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
     meeting_location: Mapped[str] = mapped_column(String(240), nullable=False)
@@ -44,6 +52,7 @@ class Expedition(IntegerPrimaryKeyMixin, TimestampMixin, VersionMixin, Base):
         back_populates="expedition",
         cascade="all, delete-orphan",
     )
+    route_revision: Mapped[RouteRevision] = relationship(back_populates="expeditions")
 
 
 class ExpeditionRegistration(IntegerPrimaryKeyMixin, TimestampMixin, VersionMixin, Base):

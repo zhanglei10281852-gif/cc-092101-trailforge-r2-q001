@@ -20,6 +20,7 @@ from trailforge.schemas.activities import (
     WithdrawalRequest,
 )
 from trailforge.schemas.common import Page
+from trailforge.schemas.routes import RouteRevisionResponse
 from trailforge.services.activities import ExpeditionService
 
 router = APIRouter(prefix="/expeditions", tags=["expeditions"])
@@ -115,3 +116,11 @@ def withdraw_member(
 @router.get("/{expedition_id}/roster", response_model=ExpeditionRoster)
 def expedition_roster(expedition_id: int, session: SessionDep) -> ExpeditionRoster:
     return ExpeditionService(session).roster(expedition_id)
+
+
+@router.get(
+    "/{expedition_id}/route-revision",
+    response_model=RouteRevisionResponse,
+)
+def expedition_route_revision(expedition_id: int, session: SessionDep) -> RouteRevisionResponse:
+    return ExpeditionService(session).pinned_route_revision(expedition_id)

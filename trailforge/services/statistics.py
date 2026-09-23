@@ -8,7 +8,7 @@ from trailforge.database.base import utc_now
 from trailforge.domain.enums import ActivityStatus, EmergencyStatus, LoanStatus, PlanStatus
 from trailforge.models.activities import Expedition, ExpeditionRegistration
 from trailforge.models.gear import GearCatalog, GearInventory, GearLoan
-from trailforge.models.routes import TrailRoute
+from trailforge.models.routes import RouteRevision, TrailRoute
 from trailforge.models.safety import EmergencyIncident, ItineraryCheckIn, RiskAssessment
 from trailforge.models.training import TrainingPlan
 from trailforge.models.users import User
@@ -24,7 +24,7 @@ class StatisticsService(ServiceBase):
         current = now or utc_now()
         active_users = self._count(select(func.count()).where(User.is_active.is_(True)))
         published_routes = self._count(
-            select(func.count()).where(TrailRoute.is_published.is_(True))
+            select(func.count()).where(TrailRoute.current_revision_no.is_not(None))
         )
         active_plans = self._count(
             select(func.count()).where(TrainingPlan.status == PlanStatus.ACTIVE)
@@ -42,11 +42,11 @@ class StatisticsService(ServiceBase):
         )
         distance, gain = self.session.execute(
             select(
-                func.coalesce(func.sum(TrailRoute.distance_km), 0),
-                func.coalesce(func.sum(TrailRoute.elevation_gain_m), 0),
+                func.coalesce(func.sum(RouteRevision.distance_km), 0),
+                func.coalesce(func.sum(RouteRevision.elevation_gain_m), 0),
             )
             .select_from(Expedition)
-            .join(TrailRoute, TrailRoute.id == Expedition.route_id)
+            .join(RouteRevision, RouteRevision.id == Expedition.route_revision_id)
             .where(Expedition.status == ActivityStatus.COMPLETED)
         ).one()
         overdue = self._count(

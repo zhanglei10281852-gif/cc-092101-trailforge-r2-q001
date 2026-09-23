@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime
+from typing import TYPE_CHECKING
+
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     Column,
@@ -14,9 +18,12 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from trailforge.database.base import Base
+from trailforge.database.base import Base, UTCDateTime, utc_now
 from trailforge.domain.enums import Difficulty, PointType, RiskLevel
 from trailforge.models.mixins import IntegerPrimaryKeyMixin, TimestampMixin, VersionMixin
+
+if TYPE_CHECKING:
+    from trailforge.models.activities import Expedition
 
 route_risk_tags = Table(
     "route_risk_tags",
@@ -35,6 +42,14 @@ class TrailRoute(IntegerPrimaryKeyMixin, TimestampMixin, VersionMixin, Base):
         CheckConstraint("elevation_loss_m >= 0", name="loss_nonnegative"),
         CheckConstraint("estimated_duration_minutes > 0", name="duration_positive"),
         CheckConstraint("min_altitude_m <= max_altitude_m", name="altitude_order"),
+        CheckConstraint(
+            "current_revision_no IS NULL OR current_revision_no >= 1",
+            name="current_revision_positive",
+        ),
+        CheckConstraint(
+            "draft_source_revision_no IS NULL OR draft_source_revision_no >= 1",
+            name="draft_source_positive",
+        ),
     )
 
     name: Mapped[str] = mapped_column(String(180), nullable=False, index=True)
@@ -48,7 +63,12 @@ class TrailRoute(IntegerPrimaryKeyMixin, TimestampMixin, VersionMixin, Base):
     estimated_duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
     difficulty: Mapped[Difficulty] = mapped_column(String(24), nullable=False, index=True)
     is_loop: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    is_published: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    current_revision_no: Mapped[int | None] = mapped_column(Integer, index=True)
+    draft_source_revision_no: Mapped[int | None] = mapped_column(Integer)
+
+    @property
+    def is_published(self) -> bool:
+        return self.current_revision_no is not None
 
     segments: Mapped[list[RouteSegment]] = relationship(
         back_populates="route",
@@ -63,6 +83,67 @@ class TrailRoute(IntegerPrimaryKeyMixin, TimestampMixin, VersionMixin, Base):
     risk_tags: Mapped[list[RiskTag]] = relationship(
         secondary=route_risk_tags, back_populates="routes"
     )
+    revisions: Mapped[list[RouteRevision]] = relationship(
+        back_populates="route",
+        order_by="RouteRevision.revision_no",
+    )
+
+
+class RouteRevision(IntegerPrimaryKeyMixin, Base):
+    """Immutable snapshot of a route produced by a publish operation."""
+
+    __tablename__ = "route_revisions"
+    __table_args__ = (
+        UniqueConstraint("route_id", "revision_no", name="uq_revision_route_no"),
+        CheckConstraint("revision_no >= 1", name="revision_no_positive"),
+        CheckConstraint("distance_km > 0", name="distance_positive"),
+        CheckConstraint("elevation_gain_m >= 0", name="gain_nonnegative"),
+        CheckConstraint("elevation_loss_m >= 0", name="loss_nonnegative"),
+        CheckConstraint("estimated_duration_minutes > 0", name="duration_positive"),
+        CheckConstraint("min_altitude_m <= max_altitude_m", name="altitude_order"),
+    )
+
+    route_id: Mapped[int] = mapped_column(
+        ForeignKey("trail_routes.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    revision_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    published_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, nullable=False, index=True
+    )
+    published_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    derived_from_revision_no: Mapped[int | None] = mapped_column(Integer)
+    change_summary: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    name: Mapped[str] = mapped_column(String(180), nullable=False)
+    region: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    distance_km: Mapped[float] = mapped_column(Float, nullable=False)
+    elevation_gain_m: Mapped[int] = mapped_column(Integer, nullable=False)
+    elevation_loss_m: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    min_altitude_m: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    max_altitude_m: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    estimated_duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    difficulty: Mapped[Difficulty] = mapped_column(String(24), nullable=False)
+    is_loop: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    segments_json: Mapped[list] = mapped_column("segments", JSON, default=list, nullable=False)
+    points_json: Mapped[list] = mapped_column("points", JSON, default=list, nullable=False)
+    risk_tags_json: Mapped[list] = mapped_column("risk_tags", JSON, default=list, nullable=False)
+
+    route: Mapped[TrailRoute] = relationship(back_populates="revisions")
+    expeditions: Mapped[list[Expedition]] = relationship(back_populates="route_revision")
+
+    @property
+    def segments(self) -> list[dict]:
+        return list(self.segments_json)
+
+    @property
+    def points(self) -> list[dict]:
+        return list(self.points_json)
+
+    @property
+    def risk_tag_codes(self) -> list[str]:
+        return [item["code"] for item in self.risk_tags_json]
 
 
 class RouteSegment(IntegerPrimaryKeyMixin, TimestampMixin, Base):

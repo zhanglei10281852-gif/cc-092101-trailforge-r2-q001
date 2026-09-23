@@ -109,6 +109,19 @@ curl -sS -X POST 'http://127.0.0.1:8000/api/v1/routes?actor_id=1' \
 
 列表接口都支持 `page`、`page_size`、`sort` 和 `direction`；各资源只接受文档中列出的排序字段，未知字段会返回明确的 422 业务错误。创建报名、打卡、紧急事件和库存变更时，正文包含 `idempotency_key`。同一作用域下用相同键和相同请求会返回原资源，用相同键发送不同请求会返回 409。
 
+## 路线不可变修订
+
+路线分两层：`trail_routes` 上的字段、路段、关键点和风险标签是可继续编辑的**草稿工作副本**；调用发布接口会冻结出带连续版本号的**修订（route revision）**，修订内含当时完整的路段、关键点、补给点和风险标签快照，发布后不能修改或删除（数据库触发器和外键 `RESTRICT` 双重保护）。
+
+- `POST /api/v1/routes/{id}/publish`：把当前草稿发布为下一修订（版本号连续递增）。并发发布同一草稿时只有一个请求能成功，另一个返回 409 `conflict` 并提示重新拉取；也可带 `expected_version` 做乐观锁。
+- `GET /api/v1/routes/{id}/revisions`、`GET /api/v1/routes/{id}/revisions/{no}`：修订列表与详情。
+- `GET /api/v1/routes/{id}/revisions/diff?from=1&to=2`：两版在标量字段、路段、关键点（按 sequence 对齐）和风险标签上的差异。
+- `POST /api/v1/routes/{id}/derive-draft`：从任一旧修订派生新草稿（正文 `{"revision_no":1}`），随后可编辑并发布为新版本，新修订会记录 `derived_from_revision_no`。
+- `GET /api/v1/routes/{id}` 对已发布路线返回**当前发布修订**的内容；`GET /api/v1/routes/{id}/draft` 返回可编辑的草稿工作副本。
+- 活动创建时固定引用某个已发布修订（`route_revision_id`/`route_revision_no`，默认为当前最新版，也可用 `route_revision_no` 指定旧版）。之后发布新版本不会影响既有活动；`GET /api/v1/expeditions/{id}/route-revision` 可查看该活动依据的那一版。
+- 发布、活动绑定和审计记录在同一个数据库事务内提交，任一步失败全部回滚。
+- 从 0001 旧库升级时，迁移 0002 会自动把每条历史已发布路线冻结为第 1 版修订，并把既有活动绑定到该修订；草稿路线保持草稿。重启后版本链与绑定关系保持一致，`check-db` 会额外校验修订链连续性、当前修订悬挂和活动绑定完整性。
+
 ## 目录
 
 ```text
