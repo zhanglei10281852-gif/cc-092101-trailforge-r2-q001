@@ -30,7 +30,10 @@ class ExpeditionRepository(BaseRepository[Expedition]):
     def get_detail(self, expedition_id: int, *, for_update: bool = False) -> Expedition | None:
         statement = (
             select(Expedition)
-            .options(selectinload(Expedition.registrations))
+            .options(
+                selectinload(Expedition.registrations),
+                selectinload(Expedition.route_revision),
+            )
             .where(Expedition.id == expedition_id)
         )
         if for_update:
@@ -38,7 +41,10 @@ class ExpeditionRepository(BaseRepository[Expedition]):
         return self.session.scalar(statement)
 
     def list_expeditions(self, filters: ExpeditionFilter) -> PageResult[Expedition]:
-        statement: Select = select(Expedition).options(selectinload(Expedition.registrations))
+        statement: Select = select(Expedition).options(
+            selectinload(Expedition.registrations),
+            selectinload(Expedition.route_revision),
+        )
         if filters.organizer_id is not None:
             statement = statement.where(Expedition.organizer_id == filters.organizer_id)
         if filters.route_id is not None:

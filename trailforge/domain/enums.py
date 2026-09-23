@@ -151,6 +151,7 @@ class InventoryMovementType(StrEnum):
 class AuditAction(StrEnum):
     CREATED = "created"
     UPDATED = "updated"
+    PUBLISHED = "published"
     STATUS_CHANGED = "status_changed"
     REGISTERED = "registered"
     WITHDRAWN = "withdrawn"

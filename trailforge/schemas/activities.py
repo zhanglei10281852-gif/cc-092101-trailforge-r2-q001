@@ -15,6 +15,9 @@ from trailforge.schemas.common import (
 class ExpeditionCreate(BaseModel):
     organizer_id: int = Field(gt=0)
     route_id: int = Field(gt=0)
+    # Optional explicit pin to a published revision of the route. When omitted,
+    # the route's current published revision is pinned at creation time.
+    route_revision_id: int | None = Field(default=None, gt=0)
     name: str = Field(min_length=1, max_length=180)
     description: str = Field(default="", max_length=10000)
     meeting_location: str = Field(min_length=1, max_length=240)
@@ -69,6 +72,8 @@ class ExpeditionUpdate(BaseModel):
 class ExpeditionResponse(VersionedResponse):
     organizer_id: int
     route_id: int
+    route_revision_id: int | None
+    route_version_number: int | None
     name: str
     description: str
     meeting_location: str

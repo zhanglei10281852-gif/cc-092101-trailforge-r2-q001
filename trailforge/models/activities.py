@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import CheckConstraint, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -8,6 +9,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from trailforge.database.base import Base, UTCDateTime
 from trailforge.domain.enums import ActivityStatus, RegistrationStatus, RiskLevel, TeamRole
 from trailforge.models.mixins import IntegerPrimaryKeyMixin, TimestampMixin, VersionMixin
+
+if TYPE_CHECKING:
+    from trailforge.models.revisions import RouteRevision
 
 
 class Expedition(IntegerPrimaryKeyMixin, TimestampMixin, VersionMixin, Base):
@@ -23,6 +27,13 @@ class Expedition(IntegerPrimaryKeyMixin, TimestampMixin, VersionMixin, Base):
         ForeignKey("users.id", ondelete="RESTRICT"), index=True
     )
     route_id: Mapped[int] = mapped_column(ForeignKey("trail_routes.id", ondelete="RESTRICT"))
+    # Pinned at creation to one immutable published revision of the route.
+    # Later route versions never move this reference. Nullable at the
+    # database level so migration 0002 can add the column to legacy databases
+    # before backfilling it; the service always sets it for new expeditions.
+    route_revision_id: Mapped[int | None] = mapped_column(
+        ForeignKey("route_revisions.id", ondelete="RESTRICT"), index=True
+    )
     name: Mapped[str] = mapped_column(String(180), nullable=False, index=True)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
     meeting_location: Mapped[str] = mapped_column(String(240), nullable=False)
@@ -44,6 +55,11 @@ class Expedition(IntegerPrimaryKeyMixin, TimestampMixin, VersionMixin, Base):
         back_populates="expedition",
         cascade="all, delete-orphan",
     )
+    route_revision: Mapped[RouteRevision | None] = relationship()
+
+    @property
+    def route_version_number(self) -> int | None:
+        return self.route_revision.version_number if self.route_revision is not None else None
 
 
 class ExpeditionRegistration(IntegerPrimaryKeyMixin, TimestampMixin, VersionMixin, Base):

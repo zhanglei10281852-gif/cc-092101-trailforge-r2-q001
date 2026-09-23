@@ -8,6 +8,7 @@ from trailforge.database.base import utc_now
 from trailforge.domain.enums import ActivityStatus, EmergencyStatus, LoanStatus, PlanStatus
 from trailforge.models.activities import Expedition, ExpeditionRegistration
 from trailforge.models.gear import GearCatalog, GearInventory, GearLoan
+from trailforge.models.revisions import RouteRevision
 from trailforge.models.routes import TrailRoute
 from trailforge.models.safety import EmergencyIncident, ItineraryCheckIn, RiskAssessment
 from trailforge.models.training import TrainingPlan
@@ -40,13 +41,26 @@ class StatisticsService(ServiceBase):
         completed = self._count(
             select(func.count()).where(Expedition.status == ActivityStatus.COMPLETED)
         )
+        # Completed expeditions are measured by the route revision they were
+        # pinned to, so later route versions never rewrite history.
         distance, gain = self.session.execute(
             select(
-                func.coalesce(func.sum(TrailRoute.distance_km), 0),
-                func.coalesce(func.sum(TrailRoute.elevation_gain_m), 0),
+                func.coalesce(
+                    func.sum(func.coalesce(RouteRevision.distance_km, TrailRoute.distance_km)),
+                    0,
+                ),
+                func.coalesce(
+                    func.sum(
+                        func.coalesce(
+                            RouteRevision.elevation_gain_m, TrailRoute.elevation_gain_m
+                        )
+                    ),
+                    0,
+                ),
             )
             .select_from(Expedition)
             .join(TrailRoute, TrailRoute.id == Expedition.route_id)
+            .outerjoin(RouteRevision, RouteRevision.id == Expedition.route_revision_id)
             .where(Expedition.status == ActivityStatus.COMPLETED)
         ).one()
         overdue = self._count(

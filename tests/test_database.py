@@ -30,7 +30,7 @@ def test_database_enables_foreign_keys_and_wal(database: Database) -> None:
 def test_migration_initialization_is_idempotent(database: Database) -> None:
     assert initialize_database(database) == []
     status = migration_status(database)
-    assert status == {"initialized": True, "applied": ["0001"], "pending": []}
+    assert status == {"initialized": True, "applied": ["0001", "0002"], "pending": []}
 
 
 def test_integrity_check_reports_healthy_database(database: Database) -> None:

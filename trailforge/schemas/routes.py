@@ -150,6 +150,13 @@ class TrailRouteCreate(BaseModel):
 
 
 class TrailRouteUpdate(BaseModel):
+    """Edit the route's working copy. Only allowed while a draft is open.
+
+    Publishing no longer happens through this schema: use the dedicated
+    publish endpoint so every publication produces an immutable revision.
+    Segments and points, when provided, fully replace the existing ones.
+    """
+
     name: str | None = Field(default=None, min_length=1, max_length=180)
     region: str | None = Field(default=None, min_length=1, max_length=120)
     description: str | None = Field(default=None, max_length=10000)
@@ -159,9 +166,26 @@ class TrailRouteUpdate(BaseModel):
     estimated_duration_minutes: int | None = Field(default=None, gt=0, le=10080)
     difficulty: Difficulty | None = None
     is_loop: bool | None = None
-    is_published: bool | None = None
+    segments: list[RouteSegmentCreate] | None = Field(default=None, max_length=1000)
+    points: list[RoutePointCreate] | None = Field(default=None, max_length=5000)
     risk_tag_ids: list[int] | None = Field(default=None, max_length=100)
     expected_version: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def validate_child_sequences(self) -> TrailRouteUpdate:
+        if self.segments is not None:
+            sequences = [item.sequence for item in self.segments]
+            if len(sequences) != len(set(sequences)):
+                raise ValueError("segment sequences must be unique")
+        if self.points is not None:
+            sequences = [item.sequence for item in self.points]
+            if len(sequences) != len(set(sequences)):
+                raise ValueError("point sequences must be unique")
+        if self.risk_tag_ids is not None and len(self.risk_tag_ids) != len(
+            set(self.risk_tag_ids)
+        ):
+            raise ValueError("risk_tag_ids must be unique")
+        return self
 
 
 class TrailRouteResponse(VersionedResponse):
@@ -177,6 +201,8 @@ class TrailRouteResponse(VersionedResponse):
     difficulty: Difficulty
     is_loop: bool
     is_published: bool
+    draft_open: bool
+    current_version_number: int | None
     segments: list[RouteSegmentResponse] = Field(default_factory=list)
     points: list[RoutePointResponse] = Field(default_factory=list)
     risk_tags: list[RiskTagResponse] = Field(default_factory=list)

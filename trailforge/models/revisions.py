@@ -1,40 +1,37 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from datetime import datetime
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
-    Column,
     Float,
     ForeignKey,
     Integer,
     String,
-    Table,
     Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from trailforge.database.base import Base
+from trailforge.database.base import Base, UTCDateTime
 from trailforge.domain.enums import Difficulty, PointType, RiskLevel
-from trailforge.models.mixins import IntegerPrimaryKeyMixin, TimestampMixin, VersionMixin
-
-if TYPE_CHECKING:
-    from trailforge.models.revisions import RouteRevision
-
-route_risk_tags = Table(
-    "route_risk_tags",
-    Base.metadata,
-    Column("route_id", ForeignKey("trail_routes.id", ondelete="CASCADE"), primary_key=True),
-    Column("risk_tag_id", ForeignKey("risk_tags.id", ondelete="CASCADE"), primary_key=True),
-)
+from trailforge.models.mixins import IntegerPrimaryKeyMixin, TimestampMixin
 
 
-class TrailRoute(IntegerPrimaryKeyMixin, TimestampMixin, VersionMixin, Base):
-    __tablename__ = "trail_routes"
+class RouteRevision(IntegerPrimaryKeyMixin, TimestampMixin, Base):
+    """Immutable snapshot of a trail route captured at publish time.
+
+    Rows in this table (and its child tables) are never updated or deleted;
+    database triggers installed by migration 0002 enforce that. The current
+    published version of a route is the revision with the highest
+    version_number, so no mutable "current" pointer can drift.
+    """
+
+    __tablename__ = "route_revisions"
     __table_args__ = (
-        UniqueConstraint("name", "region", name="uq_route_name_region"),
+        UniqueConstraint("route_id", "version_number", name="uq_revision_route_version"),
+        CheckConstraint("version_number >= 1", name="version_number_positive"),
         CheckConstraint("distance_km > 0", name="distance_positive"),
         CheckConstraint("elevation_gain_m >= 0", name="gain_nonnegative"),
         CheckConstraint("elevation_loss_m >= 0", name="loss_nonnegative"),
@@ -42,45 +39,49 @@ class TrailRoute(IntegerPrimaryKeyMixin, TimestampMixin, VersionMixin, Base):
         CheckConstraint("min_altitude_m <= max_altitude_m", name="altitude_order"),
     )
 
-    name: Mapped[str] = mapped_column(String(180), nullable=False, index=True)
-    region: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    route_id: Mapped[int] = mapped_column(
+        ForeignKey("trail_routes.id", ondelete="RESTRICT"), index=True
+    )
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    change_summary: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    published_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    published_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+
+    name: Mapped[str] = mapped_column(String(180), nullable=False)
+    region: Mapped[str] = mapped_column(String(120), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
-    distance_km: Mapped[float] = mapped_column(Float, nullable=False, index=True)
-    elevation_gain_m: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    distance_km: Mapped[float] = mapped_column(Float, nullable=False)
+    elevation_gain_m: Mapped[int] = mapped_column(Integer, nullable=False)
     elevation_loss_m: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     min_altitude_m: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     max_altitude_m: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     estimated_duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
-    difficulty: Mapped[Difficulty] = mapped_column(String(24), nullable=False, index=True)
+    difficulty: Mapped[Difficulty] = mapped_column(String(24), nullable=False)
     is_loop: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    is_published: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
-    # True while the working copy may be edited and published. New routes start
-    # with an open draft; publishing closes it and deriving from a revision
-    # reopens it. Published revisions themselves never change.
-    draft_open: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    segments: Mapped[list[RouteSegment]] = relationship(
-        back_populates="route",
+    segments: Mapped[list[RouteRevisionSegment]] = relationship(
+        back_populates="revision",
         cascade="all, delete-orphan",
-        order_by="RouteSegment.sequence",
+        order_by="RouteRevisionSegment.sequence",
     )
-    points: Mapped[list[RoutePoint]] = relationship(
-        back_populates="route",
+    points: Mapped[list[RouteRevisionPoint]] = relationship(
+        back_populates="revision",
         cascade="all, delete-orphan",
-        order_by="RoutePoint.sequence",
+        order_by="RouteRevisionPoint.sequence",
     )
-    risk_tags: Mapped[list[RiskTag]] = relationship(
-        secondary=route_risk_tags, back_populates="routes"
-    )
-    revisions: Mapped[list[RouteRevision]] = relationship(
-        order_by="RouteRevision.version_number",
+    risk_tags: Mapped[list[RouteRevisionRiskTag]] = relationship(
+        back_populates="revision",
+        cascade="all, delete-orphan",
+        order_by="RouteRevisionRiskTag.code",
     )
 
 
-class RouteSegment(IntegerPrimaryKeyMixin, TimestampMixin, Base):
-    __tablename__ = "route_segments"
+class RouteRevisionSegment(IntegerPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "route_revision_segments"
     __table_args__ = (
-        UniqueConstraint("route_id", "sequence", name="uq_segment_route_sequence"),
+        UniqueConstraint("revision_id", "sequence", name="uq_revision_segment_sequence"),
         CheckConstraint("sequence >= 1", name="sequence_positive"),
         CheckConstraint("distance_km > 0", name="distance_positive"),
         CheckConstraint("elevation_gain_m >= 0", name="gain_nonnegative"),
@@ -91,7 +92,9 @@ class RouteSegment(IntegerPrimaryKeyMixin, TimestampMixin, Base):
         CheckConstraint("end_longitude BETWEEN -180 AND 180", name="end_longitude_range"),
     )
 
-    route_id: Mapped[int] = mapped_column(ForeignKey("trail_routes.id", ondelete="CASCADE"))
+    revision_id: Mapped[int] = mapped_column(
+        ForeignKey("route_revisions.id", ondelete="CASCADE"), index=True
+    )
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
@@ -104,20 +107,22 @@ class RouteSegment(IntegerPrimaryKeyMixin, TimestampMixin, Base):
     end_latitude: Mapped[float] = mapped_column(Float, nullable=False)
     end_longitude: Mapped[float] = mapped_column(Float, nullable=False)
 
-    route: Mapped[TrailRoute] = relationship(back_populates="segments")
+    revision: Mapped[RouteRevision] = relationship(back_populates="segments")
 
 
-class RoutePoint(IntegerPrimaryKeyMixin, TimestampMixin, Base):
-    __tablename__ = "route_points"
+class RouteRevisionPoint(IntegerPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "route_revision_points"
     __table_args__ = (
-        UniqueConstraint("route_id", "sequence", name="uq_point_route_sequence"),
+        UniqueConstraint("revision_id", "sequence", name="uq_revision_point_sequence"),
         CheckConstraint("sequence >= 1", name="sequence_positive"),
         CheckConstraint("latitude BETWEEN -90 AND 90", name="latitude_range"),
         CheckConstraint("longitude BETWEEN -180 AND 180", name="longitude_range"),
         CheckConstraint("distance_from_start_km >= 0", name="distance_nonnegative"),
     )
 
-    route_id: Mapped[int] = mapped_column(ForeignKey("trail_routes.id", ondelete="CASCADE"))
+    revision_id: Mapped[int] = mapped_column(
+        ForeignKey("route_revisions.id", ondelete="CASCADE"), index=True
+    )
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     point_type: Mapped[PointType] = mapped_column(String(24), nullable=False, index=True)
@@ -128,18 +133,27 @@ class RoutePoint(IntegerPrimaryKeyMixin, TimestampMixin, Base):
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
     supply_details: Mapped[str] = mapped_column(Text, default="", nullable=False)
 
-    route: Mapped[TrailRoute] = relationship(back_populates="points")
+    revision: Mapped[RouteRevision] = relationship(back_populates="points")
 
 
-class RiskTag(IntegerPrimaryKeyMixin, TimestampMixin, Base):
-    __tablename__ = "risk_tags"
+class RouteRevisionRiskTag(IntegerPrimaryKeyMixin, TimestampMixin, Base):
+    """Snapshot of a risk tag as it looked when the revision was published."""
 
-    code: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    __tablename__ = "route_revision_risk_tags"
+    __table_args__ = (
+        UniqueConstraint("revision_id", "code", name="uq_revision_risk_tag_code"),
+    )
+
+    revision_id: Mapped[int] = mapped_column(
+        ForeignKey("route_revisions.id", ondelete="CASCADE"), index=True
+    )
+    risk_tag_id: Mapped[int | None] = mapped_column(
+        ForeignKey("risk_tags.id", ondelete="RESTRICT")
+    )
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
-    level: Mapped[RiskLevel] = mapped_column(String(24), nullable=False, index=True)
+    level: Mapped[RiskLevel] = mapped_column(String(24), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
     mitigation: Mapped[str] = mapped_column(Text, default="", nullable=False)
 
-    routes: Mapped[list[TrailRoute]] = relationship(
-        secondary=route_risk_tags, back_populates="risk_tags"
-    )
+    revision: Mapped[RouteRevision] = relationship(back_populates="risk_tags")

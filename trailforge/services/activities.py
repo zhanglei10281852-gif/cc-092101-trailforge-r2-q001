@@ -20,6 +20,7 @@ from trailforge.errors import (
 from trailforge.models.activities import Expedition, ExpeditionRegistration
 from trailforge.repositories.activities import ExpeditionRepository
 from trailforge.repositories.base import apply_version
+from trailforge.repositories.revisions import RouteRevisionRepository
 from trailforge.repositories.routes import RouteRepository
 from trailforge.repositories.users import UserRepository
 from trailforge.schemas.activities import (
@@ -50,9 +51,26 @@ class ExpeditionService(ServiceBase):
         route = self.routes.get_detail(data.route_id)
         if route is None:
             raise NotFoundError(f"TrailRoute {data.route_id} was not found")
-        if not route.is_published:
-            raise ValidationError("an expedition requires a published route")
-        expedition = Expedition(**data.model_dump())
+        revisions = RouteRevisionRepository(self.session)
+        if data.route_revision_id is not None:
+            revision = revisions.get_detail(data.route_revision_id)
+            if revision is None or revision.route_id != route.id:
+                raise ValidationError(
+                    "route_revision_id does not reference a published revision "
+                    "of this route",
+                    context={"route_id": route.id, "route_revision_id": data.route_revision_id},
+                )
+        else:
+            revision = revisions.latest_for_route(route.id)
+            if revision is None:
+                raise ValidationError("an expedition requires a published route")
+        # The expedition pins this exact immutable revision. The pin, the
+        # expedition, the organizer registration and the audit record all
+        # commit in this request's single transaction.
+        expedition = Expedition(
+            **data.model_dump(exclude={"route_revision_id"}),
+            route_revision_id=revision.id,
+        )
         self.session.add(expedition)
         self.session.flush()
         organizer_registration = ExpeditionRegistration(
@@ -71,7 +89,12 @@ class ExpeditionService(ServiceBase):
             entity_id=expedition.id,
             action=AuditAction.CREATED,
             after=self.snapshot(expedition),
-            context={"route_id": route.id, "organizer_registration_id": organizer_registration.id},
+            context={
+                "route_id": route.id,
+                "route_revision_id": revision.id,
+                "route_version_number": revision.version_number,
+                "organizer_registration_id": organizer_registration.id,
+            },
         )
         return ExpeditionResponse.model_validate(expedition)
 
